@@ -1,0 +1,919 @@
+// =====================================================
+// FixedLineMucus Macro For ImageJ/Fiji
+// By Megan Turluk, Mucin Glycobiology (Bergstrom) Lab
+// Version 1.0 — 06 March 2026
+// =====================================================
+
+// !! This macro measures the perpendicular distances between two user-drawn lines at evenly spaced points along the test line.
+// !! Optimized to measure the thickness of straightened mucus.
+
+// =====================================================
+// DEFAULT SETTINGS
+// =====================================================
+
+// !! Customize overlay colours, export options, and measurement spacing below.
+// !! All colour names must be recognized by ImageJ.
+
+// → Overlay colours.
+settingTextColor         = 'White';  // Colour of the stats text shown on the image.
+settingTextBgColor       = 'Black';  // Background colour behind the stats text.
+settingDistColor         = 'Yellow'; // Colour of the individual distance lines drawn on the image.
+settingShortestDistColor = 'Red';    // The shortest measured distance is highlighted in this colour.
+settingLongestDistColor  = 'Green';  // The longest measured distance is highlighted in this colour.
+settingRefLineColor      = 'Pink';   // Colour used to draw the reference line on the image.
+settingTestLineColor     = 'Cyan';   // Colour used to draw the test line on the image.
+
+// → Annotated image export.
+// !! If enabled, the macro saves a copy of the image with all drawn lines and stats burned in.
+// !! The export folder can be set in the UI or left blank to be prompted at run time.
+settingExportAnnotatedImages = 1;  // 0 = do not export annotated images; 1 = export them.
+settingAnnotatedExportDir    = ''; // Folder path for exported images (leave blank to be prompted).
+
+// → CSV output columns.
+// !! These control which columns are written to the results file.
+settingExportAngleValues = 1;  // 1 = include a column for the angle of each distance segment.
+settingExportPointCoords = 1;  // 1 = include columns for the pixel coordinates.
+
+// → Perpendicular reference angle.
+// !! Distances are always measured perpendicular to a reference direction.
+// !! If settingPerpRefAngleZero = 1, the direction is fixed at 0 degrees.
+// !! If set to 0, you will be asked to draw a straight 'direction line' at the start of each measurement.
+settingPerpRefAngleZero = 1;
+
+// → Measurement spacing.
+// !! This value sets the spacing: 1 = every pixel, 5 = every 5 pixels, etc.
+// !! Larger values are faster.
+settingMeasureEquidistance = 5;
+
+// → On-image statistics.
+settingShowStatsInImage = 1;  // 1 = show stats on image; 0 = hide them.
+
+// → Line width.
+// !! Controls the thickness (in pixels) of all lines drawn on the image overlay.
+// !! Set to 0 to let the macro choose a width automatically based on the size of the measured region.
+settingLineWidth = 0;
+
+
+macro "FixedLineMucus" {
+
+softwareVersion = '1.0';
+
+// =====================================================
+// USER INTERFACE
+// ---------------------------------------------------------------
+// → Shows the startup dialog. Loops until the user selects a valid result file.
+// ---------------------------------------------------------------
+resultFile = 0;
+while(resultFile == 0){
+
+  Dialog.create('InteredgeDistance macro' + ', v' + softwareVersion);
+  Dialog.setInsets(0, 160, 0);
+
+    // → Export Options.
+  Dialog.setInsets(10, 0, 5);
+  Dialog.addMessage('----- Export Options -----');   Dialog.setInsets(0, 20, 0);
+  Dialog.addCheckbox('Include angle (deg) column', settingExportAngleValues);
+  Dialog.setInsets(0, 20, 0);
+  Dialog.addCheckbox('Include point coordinates (TestX/TestY/RefX/RefY)', settingExportPointCoords);
+  Dialog.setInsets(0, 20, 0);
+  Dialog.addCheckbox('Export annotated reference image (lines + stats)', settingExportAnnotatedImages);
+
+    // → Measurement Settings.
+  Dialog.setInsets(10, 0, 5);
+  Dialog.addMessage('----- Measurement Settings -----');
+  Dialog.setInsets(0, 20, 0);
+  Dialog.addCheckbox('Auto Perpendicular reference angle = 0', settingPerpRefAngleZero);
+  Dialog.setInsets(0, 20, 0);
+  Dialog.addCheckbox('Show stats on image', settingShowStatsInImage);
+  Dialog.setInsets(0, 20, 0);
+  Dialog.addNumber('Equidistance of locations (px)', settingMeasureEquidistance);
+  Dialog.setInsets(0, 20, 0);
+  Dialog.addChoice('Color of distance lines', newArray('Blue', 'Cyan', 'Green', 'Magenta', 'Orange', 'Red', 'White', 'Yellow'), settingDistColor);
+
+    // → Output Files.
+  Dialog.setInsets(10, 0, 5);
+  Dialog.addMessage('----- Output Files -----');
+  Dialog.setInsets(0, 20, 0);
+  Dialog.addFile('* Result file (txt/csv)', '');
+  Dialog.setInsets(0, 20, 0);
+  Dialog.addFile('Annotated image export folder', settingAnnotatedExportDir);
+  Dialog.setInsets(0, 20, 0);
+  Dialog.addMessage("\nAfter selecting Result file, hit OK to continue");
+  Dialog.show();
+
+    // → Read values.
+  settingExportAngleValues     = Dialog.getCheckbox();
+  settingExportPointCoords     = Dialog.getCheckbox();
+  settingExportAnnotatedImages = Dialog.getCheckbox();
+  settingPerpRefAngleZero      = Dialog.getCheckbox();
+  settingShowStatsInImage      = Dialog.getCheckbox();
+  settingMeasureEquidistance   = Dialog.getNumber();
+  settingDistColor             = Dialog.getChoice();
+  resultFile                   = Dialog.getString();
+  settingAnnotatedExportDir    = String.trim(Dialog.getString());
+
+    // → Convert ImageJ checkboxes to integers (1 or 0).
+  if(settingExportAngleValues)    { settingExportAngleValues = 1;     } else { settingExportAngleValues = 0;     }
+  if(settingExportPointCoords)    { settingExportPointCoords = 1;     } else { settingExportPointCoords = 0;     }
+  if(settingExportAnnotatedImages){ settingExportAnnotatedImages = 1; } else { settingExportAnnotatedImages = 0; }
+  if(settingShowStatsInImage)     { settingShowStatsInImage = 1;      } else { settingShowStatsInImage = 0;      }
+  if(settingPerpRefAngleZero)     { settingPerpRefAngleZero = 1;      } else { settingPerpRefAngleZero = 0;      }
+
+    // → Make sure the equidistance value is a natural number (minimum 1).
+  if(isNaN(settingMeasureEquidistance) || settingMeasureEquidistance < 1){
+    settingMeasureEquidistance = 1;
+  }else{
+    settingMeasureEquidistance = floor(settingMeasureEquidistance);
+  }
+
+    // → Validate the result file — reset to 0 to re-prompt the loop if the file doesn't exist.
+  if(!File.exists(resultFile)){
+    resultFile = 0;
+  }
+
+    // → If annotated export is on and no folder was given, prompt for one now and create it.
+  if(resultFile != 0 && settingExportAnnotatedImages != 0){
+    if(settingAnnotatedExportDir == ''){
+      settingAnnotatedExportDir = getDirectory('Choose folder to export annotated images');
+    }
+    settingAnnotatedExportDir = String.trim(settingAnnotatedExportDir);
+    if(settingAnnotatedExportDir != ''){
+      File.makeDirectory(settingAnnotatedExportDir);
+    }else{
+      // !! If the folder prompt was cancelled, disable annotated export to avoid a broken save path.
+      settingExportAnnotatedImages = 0;
+    }
+  }
+
+} // END while(resultFile == 0)
+
+
+// =====================================================
+// STATE VARIABLES
+// =====================================================
+
+// → These track where we are in the measurement workflow.
+isNewImage      = 1;  // 1 = we need to open a new image before measuring.
+measuringImage  = 1;  // 1 = the main measurement loop is active.
+measurementNum  = 0;  // Counts how many measurements have been made on the current image.
+measurementId   = 0;  // An auto ID number written to the CSV for each measurement.
+resultAvailable = 0;  // Holds the stats summary string once a measurement is complete; 0 = no result yet.
+changeSetting   = 0;  // 1 = the user has asked to change settings between measurements.
+nextStep        = ''; // Stores the user's choice from the 'next' dialog.
+textSize        = 0;  // Automatically set font size for on-image text.
+
+
+// =====================================================
+// CSV HEADER
+// =====================================================
+
+// → Build the CSV column header.
+outTxtHeader = 'File,Measurement,Point,Distance_px';
+if(settingExportAngleValues == 1){
+  outTxtHeader = outTxtHeader + ',Angle_deg';
+}
+if(settingExportPointCoords == 1){
+  outTxtHeader = outTxtHeader + ',TestX_px,TestY_px,RefX_px,RefY_px';
+}
+outTxtHeader = outTxtHeader + "\n";
+
+// → If appending to an existing file with the same header, skip writing it again.
+// !! If the existing header differs, a new one will be written.
+existingHeaderChunk = File.openAsRawString(resultFile, 2000);
+if(startsWith(existingHeaderChunk, 'File,')){
+  headerEnd = indexOf(existingHeaderChunk, "\n");
+  if(headerEnd < 0){
+    headerEnd = lengthOf(existingHeaderChunk);
+  }
+  existingHeaderLine = substring(existingHeaderChunk, 0, headerEnd);
+  desiredHeaderLine  = replace(outTxtHeader, "\n", "");
+  if(existingHeaderLine == desiredHeaderLine){
+    outTxtHeader = '';
+  }
+}
+
+
+// =====================================================
+// MAIN MEASUREMENT LOOP
+// ---------------------------------------------------------------
+// → Asks the user to draw the two lines, performs measurements,
+// → and shows the 'next' dialog to determine how to proceed.
+// ---------------------------------------------------------------
+while(measuringImage == 1){
+
+  // → If a measurement was just completed, show a dialog asking what to do next.
+  if(resultAvailable != 0){
+    Dialog.createNonBlocking('Next');
+    Dialog.addMessage('Measurement made (px): ' + resultAvailable + "\n\nCheck in the image window");
+    dialogItems = newArray('Save measurements and Quit', 'Save measurements and Measure another image', 'Save measurements and again Measure opened image', "Don't save measurements and Measure another image", "Don't save measurements and again Measure opened image", "Don't save measurements and Quit");
+    Dialog.addRadioButtonGroup('Select NEXT action', dialogItems, dialogItems.length, 1, 'Save measurements and Measure another image');
+    Dialog.addCheckbox('Change settings for new measurement', 0);
+    Dialog.show();
+    changeSetting = Dialog.getCheckbox();
+    nextStep      = Dialog.getRadioButton();
+  }
+
+  // !! Each block below corresponds to one option in the 'Next' dialog.
+
+  if(nextStep == 'Save measurements and Quit'){
+    // → Append the current results to the CSV file, then close everything and exit.
+    File.append(outTxtHeader + outTxt, resultFile);
+    if(settingExportAnnotatedImages != 0){
+      mySaveAnnotatedImage();
+    }
+    myQuit(0);
+  }
+
+  if(nextStep == 'Save measurements and Measure another image'){
+    // → Save results, then open a file picker to choose a new image.
+    File.append(outTxtHeader + outTxt, resultFile);
+    if(settingExportAnnotatedImages != 0){
+      mySaveAnnotatedImage();
+    }
+    close('*');
+    isNewImage      = 1;
+    measuringImage  = 1;
+    resultAvailable = 0;
+    outTxtHeader    = '';
+    outTxt          = '';
+    textSize        = 0;
+  }
+
+  if(nextStep == 'Save measurements and again Measure opened image'){
+    // → Save results and measure the same image again (e.g. to mark a second region).
+    // → The image stays open; new lines are added to the existing overlay.
+    File.append(outTxtHeader + outTxt, resultFile);
+    isNewImage   = 0;
+    openedImages = getList('image.titles');
+    if(openedImages.length == 0){
+      isNewImage = 1;
+    }else if(settingShowStatsInImage != 0){
+      Overlay.removeSelection(endOverlayCount - 1);
+      measurementStats = d2s(measurementNum - 1, 0) + ': ' + resultAvailable;
+      makeText(String.trim(measurementStats), 0, (fontHeight * (measurementNum - 2)));
+      Overlay.addSelection('', 0, settingTextBgColor);
+      makeText(measurementNum - 1, refLineFirstX, refLineFirstY); // Draw the measurement number near the start of the reference line.
+      Overlay.addSelection('', 0, settingTextBgColor);
+      Overlay.show;
+      run('Select None');
+      endOverlayCount = endOverlayCount + 1;
+    }
+    measuringImage  = 1;
+    resultAvailable = 0;
+    outTxtHeader    = '';
+    outTxt          = '';
+  }
+
+  if(nextStep == "Don't save measurements and Measure another image"){
+    // → Discard the current measurement and pick a new image.
+    if(measurementId > 0){ measurementId--; }
+    close('*');
+    isNewImage      = 1;
+    measuringImage  = 1;
+    resultAvailable = 0;
+    outTxtHeader    = '';
+    outTxt          = '';
+    textSize        = 0;
+  }
+
+  if(nextStep == "Don't save measurements and again Measure opened image"){
+    // → Discard the current measurement and try again on the same image.
+    // → Any overlay lines added during this measurement are removed.
+    measurementNum--;
+    if(measurementId > 0){ measurementId--; }
+    openedImages = getList('image.titles');
+    if(openedImages.length == 0){
+      isNewImage = 1;
+    }else{
+      for(i = endOverlayCount; i > startOverlayCount; i--){
+        Overlay.removeSelection(i - 1);
+      }
+      isNewImage = 0;
+    }
+    measuringImage  = 1;
+    resultAvailable = 0;
+    outTxtHeader    = '';
+    outTxt          = '';
+    if(measurementNum == 1){
+      textSize = 0;
+    }
+  }
+
+  if(nextStep == "Don't save measurements and Quit"){
+    // → Discard the current measurement and exit.
+    if(measurementId > 0){ measurementId--; }
+    myQuit(0);
+  }
+
+  // → If the user ticked 'Change settings', show the settings dialog again.
+  if(changeSetting == 1){
+
+    Dialog.create('Change measurement settings');
+
+      // → Export Options.
+    Dialog.setInsets(10, 0, 5);
+    Dialog.addMessage('----- Export Options -----');
+    Dialog.setInsets(0, 20, 0);
+    Dialog.addCheckbox('Include angle (deg) column', settingExportAngleValues);
+    Dialog.setInsets(0, 20, 0);
+    Dialog.addCheckbox('Include point coordinates (TestX/TestY/RefX/RefY)', settingExportPointCoords);
+    Dialog.setInsets(0, 20, 0);
+    Dialog.addCheckbox('Export annotated reference image (lines + stats)', settingExportAnnotatedImages);
+
+      // → Measurement Settings.
+    Dialog.setInsets(10, 0, 5);
+    Dialog.addMessage('----- Measurement Settings -----');
+    Dialog.setInsets(0, 20, 0);
+    Dialog.addCheckbox('Auto Perpendicular reference angle = 0', settingPerpRefAngleZero);
+    Dialog.setInsets(0, 20, 0);
+    Dialog.addCheckbox('Show stats on image', settingShowStatsInImage);
+    Dialog.setInsets(0, 20, 0);
+    Dialog.addNumber('Equidistance of locations (px)', settingMeasureEquidistance);
+    Dialog.setInsets(0, 20, 0);
+    Dialog.addChoice('Color of distance lines', newArray('Blue', 'Cyan', 'Green', 'Magenta', 'Orange', 'Red', 'White', 'Yellow'), settingDistColor);
+
+    Dialog.show();
+
+      // → Read updated values in the same order they were added.
+    settingExportAngleValues     = Dialog.getCheckbox();
+    settingExportPointCoords     = Dialog.getCheckbox();
+    settingExportAnnotatedImages = Dialog.getCheckbox();
+    settingPerpRefAngleZero      = Dialog.getCheckbox();
+    settingShowStatsInImage      = Dialog.getCheckbox();
+    settingMeasureEquidistance   = Dialog.getNumber();
+    settingDistColor             = Dialog.getChoice();
+
+      // → Normalize checkboxes to numeric 0/1.
+    if(settingExportAngleValues)    { settingExportAngleValues = 1;     } else { settingExportAngleValues = 0;     }
+    if(settingExportPointCoords)    { settingExportPointCoords = 1;     } else { settingExportPointCoords = 0;     }
+    if(settingExportAnnotatedImages){ settingExportAnnotatedImages = 1; } else { settingExportAnnotatedImages = 0; }
+    if(settingShowStatsInImage)     { settingShowStatsInImage = 1;      } else { settingShowStatsInImage = 0;      }
+    if(settingPerpRefAngleZero)     { settingPerpRefAngleZero = 1;      } else { settingPerpRefAngleZero = 0;      }
+
+      // → Sanitize equidistance value (minimum 1).
+    if(isNaN(settingMeasureEquidistance) || settingMeasureEquidistance < 1){
+      settingMeasureEquidistance = 1;
+    }else{
+      settingMeasureEquidistance = floor(settingMeasureEquidistance);
+    }
+
+  } // END if(changeSetting == 1)
+
+
+// ---------------------------------------------------------------
+// Open the next image if needed.
+// ---------------------------------------------------------------
+  if(isNewImage == 1){
+    // → Ask the user to pick an image file.
+    imgPath = File.openDialog('Select image file');
+    open(imgPath);
+
+    imgFile            = File.getName(imgPath);                 // e.g. 'sample01.tif'
+    imgFileNoExtension = File.getNameWithoutExtension(imgPath); // e.g. 'sample01'
+
+    // → Make the filename safe to write into a CSV by replacing commas and quotes.
+    imgFileSafe = "" + imgFile;
+    imgFileSafe = replace(imgFileSafe, ",",  "_");
+    imgFileSafe = replace(imgFileSafe, "\"", "'");
+
+    measurementNum   = 1;  // Reset the per-image measurement counter.
+  }
+
+
+// ---------------------------------------------------------------
+// Draw the two lines.
+// ---------------------------------------------------------------
+// !! liningAttempted is set to 1 once the reference line is successfully drawn.
+// !! On subsequent iterations it triggers the retry prompt instead of the first-time prompt.
+  liningAttempted = 0;
+  do{
+
+    // → Make sure the image is still open.
+    openedImages = getList('image.titles');
+    if(openedImages.length == 0){
+      waitForUser("No image!\n\nThe macro has to quit. Please re-run it.");
+      setKeyDown('none');
+      exit;
+    }
+
+    // → Reset line lengths and the list of measurement points for this attempt.
+    lengthDrawnLine1 = 0;
+    lengthDrawnLine2 = 0;
+    testLinePoints   = newArray(0);
+
+    // → Switch to the polyline tool so the user can draw segmented or freehand lines.
+    setTool('polyline');
+
+    if(liningAttempted == 0){
+      waitForUser("[ FIRST ]: Draw the REFERENCE LINE along one edge \n\nMeasurement points on the test line will be projected perpendicularly onto this line.\n\n[ THEN ]: hit OK");
+    }else{
+      // → Remove any overlay lines drawn during the failed attempt, then re-prompt.
+      Overlay.removeRois('drawnLine1-' + measurementNum);
+      Overlay.removeRois('drawnLine2-' + measurementNum);
+      run('Select None');
+      waitForUser("Sorry, there was an issue. Please re-draw lines.\n\nIf issue persists, restart macro to change settings.\n\n[ FIRST ]: Re-draw the REFERENCE LINE (e.g. mucus surface)\n\n[ THEN ]: hit OK");
+    }
+
+    myQuit(1); // Exit cleanly if the user held Shift while clicking OK.
+
+    // → Record how many overlay elements exist before drawing.
+    // !! Used to remove exactly this measurement's lines if the user chooses 'don't save'.
+    startOverlayCount = Overlay.size;
+
+    // → Process the reference line.
+    // !! selectionType(): 5 = straight line, 6 = polyline, 7 = freehand line.
+    if(selectionType() == 5 || selectionType() == 6 || selectionType() == 7){
+      lengthDrawnLine1 = getValue('Length');
+      if(lengthDrawnLine1 > 0){
+        liningAttempted = 1;
+
+        // → Fit Spline gives smoother, more accurate coordinates along the line.
+        if(selectionType() == 6 || selectionType() == 7){
+          run('Fit Spline');
+        }
+
+        // → Interpolate the line so that we have a coordinate approximately every 1 pixel.
+        run('Interpolate', 'interval=1');
+        Roi.getCoordinates(x1, y1);                   // Store the X and Y coordinates of the reference line.
+        Roi.setName('drawnLine1-' + measurementNum);   // Name it so we can remove it later if needed.
+        Overlay.addSelection(settingRefLineColor, 1);  // Draw it on the image in the reference line colour.
+        run('Select None');
+
+        // → Prompt for the test line.
+        setTool('polyline');
+        waitForUser("[ NOW ]: Draw the TEST LINE along the other edge \n\nDistances are measured from points along this line to the reference line.\n\n[ THEN ]: hit OK\n\n\n");
+        myQuit(1);
+
+        if((selectionType() == 5 || selectionType() == 6 || selectionType() == 7)){
+          lengthDrawnLine2 = getValue('Length');
+          if(lengthDrawnLine2 > 0){
+            // → Same smoothing and interpolation as for the reference line.
+            if(selectionType() == 6 || selectionType() == 7){
+              run('Fit Spline');
+            }
+            run('Interpolate', 'interval=1');
+            Roi.getCoordinates(x2, y2);                   // Store the X and Y coordinates of the test line.
+            Roi.setName('drawnLine2-' + measurementNum);
+            Overlay.addSelection(settingTestLineColor, 1); // Draw it on the image in the test line colour.
+            run('Select None');
+
+          } // END if(lengthDrawnLine2 > 0)
+        } // END if(selectionType() == 5/6/7)
+      } // END if(lengthDrawnLine1 > 0)
+    } // END if(selectionType() == 5/6/7)
+
+
+// ---------------------------------------------------------------
+// Set up reference and test line coordinates.
+// ---------------------------------------------------------------
+// → Only proceed if both lines were drawn successfully.
+    if(lengthDrawnLine1 > 0 && lengthDrawnLine2 > 0){
+
+      // → The first drawn line is always the reference line; the second is the test line.
+      refLineX  = x1; refLineY  = y1;
+      testLineX = x2; testLineY = y2;
+
+      // → Ensure both lines run left-to-right (increasing X), or top-to-bottom if vertical.
+      // !! This consistent ordering matters for the end-trimming logic below.
+      if(refLineX[0] > refLineX[refLineX.length - 1] || (refLineX[0] == refLineX[refLineX.length - 1] && refLineY[0] > refLineY[refLineY.length - 1])){
+        Array.reverse(refLineX);
+        Array.reverse(refLineY);
+      }
+
+      // → Store the start and end coordinates of the reference line for later use.
+      refLineFirstX = round(refLineX[0]);
+      refLineFirstY = round(refLineY[0]);
+      refLineLastX  = round(refLineX[refLineX.length - 1]);
+      refLineLastY  = round(refLineY[refLineY.length - 1]);
+
+      if(testLineX[0] > testLineX[testLineX.length - 1] || (testLineX[0] == testLineX[testLineX.length - 1] && testLineY[0] > testLineY[testLineY.length - 1])){
+        Array.reverse(testLineX);
+        Array.reverse(testLineY);
+      }
+
+// ---------------------------------------------------------------
+// Trim the test line ends.
+// ---------------------------------------------------------------
+// !! If the test line extends past the ends of the reference line, measurements at those
+// !! overhanging points would have no valid reference to measure to — so we trim them off.
+// !! Trimming works by checking the angle between the reference line endpoint, the current
+// !! test line endpoint, and the next point inward. If that angle is less than 90 degrees, trim.
+
+      // → Trim the left end of the test line.
+      trimmingTestLine = 1;
+      while(testLineX.length > 1 && trimmingTestLine == 1){
+        deg = myDegreeThreePoints(refLineFirstX, testLineX[0], testLineX[1], refLineFirstY, testLineY[0], testLineY[1]);
+        if(!isNaN(deg) && deg < 90){
+          testLineX = Array.deleteIndex(testLineX, 0);
+          testLineY = Array.deleteIndex(testLineY, 0);
+        }else{
+          trimmingTestLine = 0;
+        }
+      }
+
+      // → Trim the right end of the test line.
+      trimmingTestLine = 1;
+      while(testLineX.length > 1 && trimmingTestLine == 1){
+        endKey = testLineX.length - 1;
+        deg = myDegreeThreePoints(refLineLastX, testLineX[endKey], testLineX[endKey - 1], refLineLastY, testLineY[endKey], testLineY[endKey - 1]);
+        if(!isNaN(deg) && deg < 90){
+          testLineX = Array.deleteIndex(testLineX, endKey);
+          testLineY = Array.deleteIndex(testLineY, endKey);
+        }else{
+          trimmingTestLine = 0;
+        }
+      }
+
+      // → Select evenly spaced measurement points along the test line.
+      // !! stride is the spacing in pixels between measurement points.
+      stride = settingMeasureEquidistance;
+      for(i = 0; i < testLineX.length; i += stride){
+        testLinePoints = myAppend(testLinePoints, i); // Store the index, not the coordinate.
+      }
+
+      // → If no measurement points were selected, flag for retry.
+      if(testLinePoints.length < 1){
+        lengthDrawnLine1 = 0;
+      }
+    } // END if(lengthDrawnLine1 > 0 && lengthDrawnLine2 > 0)
+  }while(lengthDrawnLine1 == 0 || lengthDrawnLine2 == 0)
+
+
+// ---------------------------------------------------------------
+// Determine the perpendicular measurement direction.
+// ---------------------------------------------------------------
+// → All distance lines will be drawn perpendicular to this direction.
+// !! If settingPerpRefAngleZero is on, the direction is fixed at 0 degrees (horizontal).
+// !! Otherwise, the user draws a straight 'direction line' to set the angle manually.
+  settingDirectionalityParallelRefDeg = '';
+  if(settingPerpRefAngleZero == 1){
+    settingDirectionalityParallelRefDeg = 0; // 0 degrees = horizontal = vertical distance lines.
+  }else{
+    do{
+      setTool('line');
+      waitForUser("[ NOW ]: Draw a DIRECTION LINE using the straight line tool\n\nThis sets the angle for perpendicular measurements. Draw it parallel to the mucus orientation.\n\n[ THEN ]: hit OK\n\n\n");
+      myQuit(1);
+      if(selectionType() == 5){
+        getSelectionCoordinates(xp, yp);
+        // → atan2 gives the angle in radians; multiply by 57.296 to convert to degrees.
+        settingDirectionalityParallelRefDeg = 57.296 * atan2((yp[1] - yp[0]), (xp[1] - xp[0]));
+      }
+    }while(settingDirectionalityParallelRefDeg == '')
+  }
+
+
+// ---------------------------------------------------------------
+// Prepare result arrays for this measurement.
+// ---------------------------------------------------------------
+// → Each array collects one value per successfully measured point.
+  shortestDistLengths = newArray(0); // The measured distance at each point (in pixels).
+  shortestDistCoords  = newArray(0); // Coordinates stored as 'testX/testY:refX/refY' strings.
+  shortestDistAngles  = newArray(0); // The angle of each distance line (in degrees).
+  shortestDistTestX   = newArray(0); // X coordinate of the test line point.
+  shortestDistTestY   = newArray(0); // Y coordinate of the test line point.
+  shortestDistRefX    = newArray(0); // X coordinate of where the perpendicular ray hits the reference line.
+  shortestDistRefY    = newArray(0); // Y coordinate of where the perpendicular ray hits the reference line.
+
+  // → parallelSideSign tracks which side of the reference line the test line is on.
+  // → Starts at 0 (unknown) and is set to 1 or -1 on the first successful hit.
+  parallelSideSign = 0;
+
+  // → Set the line width for drawing on the image.
+  // !! If settingLineWidth is 0, auto-size based on the length of the reference line.
+  lineWidth = floor(settingLineWidth);
+  if(lineWidth < 1){
+    lineWidth = floor(0.001 * sqrt(pow(refLineLastX - refLineFirstX, 2) + pow(refLineLastY - refLineFirstY, 2)) + 1);
+  }
+  Overlay.setStrokeWidth(lineWidth);
+
+  // → Compute the perpendicular direction vector.
+  // !! Converts the reference angle from degrees to radians, then calculates the unit normal vector.
+  // !! This vector is the same for every point, so it is computed once here outside the loop.
+  theta = settingDirectionalityParallelRefDeg * PI / 180;
+  nx = -sin(theta);
+  ny =  cos(theta);
+
+
+// ---------------------------------------------------------------
+// Measurement loop.
+// ---------------------------------------------------------------
+// → For each selected point on the test line, fire a ray perpendicular to the reference
+// → direction and find where it intersects the reference line. Record the distance.
+  for(i = 0; i < testLinePoints.length; i++){
+    j = testLinePoints[i]; // j is the index into testLineX/Y for this measurement point.
+
+    // → Fire the perpendicular ray and find the best intersection on the expected side.
+    hit = myPerpIntersectPolyline(testLineX[j], testLineY[j], nx, ny, refLineX, refLineY, parallelSideSign);
+
+    // → If nothing was found on the expected side, try again without a side constraint.
+    if(hit[0] == 0){
+      hit = myPerpIntersectPolyline(testLineX[j], testLineY[j], nx, ny, refLineX, refLineY, 0);
+    }
+    if(hit[0] == 1){
+      ix      = hit[1]; iy     = hit[2];
+      rawDist = hit[3];
+      tSigned = hit[4];
+
+      // → On the first successful measurement, record which side of the reference line the test line is on.
+      // !! All subsequent measurements will be constrained to the same side.
+      if(parallelSideSign == 0 && tSigned != 0){
+        if(tSigned > 0){
+          parallelSideSign = 1;
+        }else{
+          parallelSideSign = -1;
+        }
+      }
+
+      // → Record this measurement in the result arrays.
+      shortestDistLengths = myAppend(shortestDistLengths, rawDist);
+      shortestDistCoords  = myAppend(shortestDistCoords,  d2s(testLineX[j], 1) + '/' + d2s(testLineY[j], 1) + ':' + d2s(ix, 1) + '/' + d2s(iy, 1));
+      shortestDistAngles  = myAppend(shortestDistAngles,  abs(57.296 * atan2((testLineY[j] - iy), (testLineX[j] - ix))));
+      shortestDistTestX   = myAppend(shortestDistTestX,   testLineX[j]);
+      shortestDistTestY   = myAppend(shortestDistTestY,   testLineY[j]);
+      shortestDistRefX    = myAppend(shortestDistRefX,    ix);
+      shortestDistRefY    = myAppend(shortestDistRefY,    iy);
+
+      // → Draw the distance line on the image.
+      setColor(settingDistColor);
+      setLineWidth(lineWidth);
+      Overlay.drawLine(testLineX[j], testLineY[j], ix, iy);
+      Overlay.show;
+
+    } // If no intersection was found at this point, skip it.
+
+  } // END measurement loop.
+
+
+// ---------------------------------------------------------------
+// Statistics and output.
+// ---------------------------------------------------------------
+
+  // → If no distances were recorded, exit.
+  if(shortestDistLengths.length == 0){
+    waitForUser("Sorry, there was an issue. The macro could not perform measurements and will exit.\n\nPlease retry with differently drawn lines or with different macro settings.");
+    myQuit(0);
+  }
+
+  // → Calculate summary statistics across all measured distances.
+  Array.getStatistics(shortestDistLengths, min, max, mean, sd);
+
+  // → Build the stats summary string shown in the 'Next' dialog and on the image.
+  resultAvailable = 'Avg. ' + d2s(mean, 1) + ' px, SD ' + d2s(sd, 1) + ', range ' + d2s(min, 1) + '-' + d2s(max, 1) + ' (n = ' + shortestDistLengths.length + ')';
+
+  // → Highlight the shortest and longest distance lines on the image.
+  // !! rankPositions returns the indices of the array sorted from smallest to largest.
+  iRanks  = Array.rankPositions(shortestDistLengths);
+  iRanksN = iRanks.length;
+  shortestDistLengthsMin = shortestDistLengths[iRanks[0]];
+  shortestDistLengthsMax = shortestDistLengths[iRanks[iRanksN - 1]];
+
+  // → Only highlight if min and max differ; if all distances are equal there is nothing to distinguish.
+  if(shortestDistLengthsMin != shortestDistLengthsMax){
+    setLineWidth(lineWidth);
+
+    // → Redraw the shortest distance line(s) in the shortest-distance highlight colour.
+    setColor(settingShortestDistColor);
+    i = 0;
+    while(i < iRanksN && shortestDistLengths[iRanks[i]] == shortestDistLengthsMin){
+      coords = split(shortestDistCoords[iRanks[i]], "/:"); // Parse 'x1/y1:x2/y2' into 4 values.
+      Overlay.drawLine(coords[0], coords[1], coords[2], coords[3]);
+      Overlay.show;
+      i++;
+    }
+
+    // → Redraw the longest distance line(s) in the longest-distance highlight colour.
+    setColor(settingLongestDistColor);
+    i = iRanksN - 1;
+    while(i > 0 && shortestDistLengths[iRanks[i]] == shortestDistLengthsMax){
+      coords = split(shortestDistCoords[iRanks[i]], "/:");
+      Overlay.drawLine(coords[0], coords[1], coords[2], coords[3]);
+      Overlay.show;
+      i--;
+    }
+  }
+
+  // → Show the stats summary text on the image.
+  if(settingShowStatsInImage != 0){
+    setColor(settingTextColor);
+
+    // → Auto-size the font if not already set.
+    if(textSize < 1){
+      textSize = floor(0.01 * sqrt(pow(refLineLastX - refLineFirstX, 2) + pow(refLineLastY - refLineFirstY, 2)) + 8);
+    }
+    setFont('Monospaced', textSize, 'antialiased');
+    fontHeight = getValue('font.height'); // Height of one line of text in pixels.
+    // → Place each measurement's stats on a new line, stacking downward.
+    makeText('   ' + resultAvailable, 0, (fontHeight * (measurementNum - 1)));
+    Overlay.addSelection('', 0, settingTextBgColor);
+    Overlay.show;
+  }
+
+  // → Increment the global measurement counter.
+  measurementId++;
+
+  // → Build the CSV output rows for this measurement.
+  // !! One row is written for each measurement point.
+  outTxt = '';
+  for(i = 0; i < shortestDistLengths.length; i++){
+    line = imgFileSafe + ',' + measurementId + ',' + (i + 1) + ',' + d2s(shortestDistLengths[i], 3);
+    if(settingExportAngleValues == 1){
+      line = line + ',' + d2s(shortestDistAngles[i], 3);
+    }
+    if(settingExportPointCoords == 1){
+      line = line + ',' + d2s(shortestDistTestX[i], 3) + ',' + d2s(shortestDistTestY[i], 3) + ',' + d2s(shortestDistRefX[i], 3) + ',' + d2s(shortestDistRefY[i], 3);
+    }
+    outTxt = outTxt + line + "\n";
+  }
+
+  measurementNum++;
+
+  // → Record the overlay element count at the end of this measurement.
+  // !! Used to remove exactly this measurement's lines if the user chooses 'don't save'.
+  endOverlayCount = Overlay.size;
+
+} // END while(measuringImage == 1)
+
+
+// =====================================================
+// CUSTOM FUNCTIONS
+// =====================================================
+
+// ---------------------------------------------------------------
+// Array and utility helpers.
+// ---------------------------------------------------------------
+
+// → Appends a single value to the end of an array and returns the new array.
+function myAppend(arr, value){
+  arr2 = newArray(arr.length+1);
+  for(i = 0; i < arr.length; i++){
+    arr2[i] = arr[i];
+  }
+  arr2[arr.length] = value;
+  return arr2;
+}
+
+
+// ---------------------------------------------------------------
+// Geometry functions.
+// ---------------------------------------------------------------
+
+// → Returns the angle (in degrees) at point p2 formed by the three points p1, p2, p3.
+// !! Used during test line trimming to check whether an endpoint has 'rounded the corner' past the end of the reference line.
+// !! Returns NaN if p2 coincides with p1 or p3 (would be a zero-length segment).
+function myDegreeThreePoints(p1x, p2x, p3x, p1y, p2y, p3y){
+  // → Squared distances between the three pairs of points.
+  p1p2 = pow(p1x - p2x, 2) + pow(p1y - p2y, 2);
+  p2p3 = pow(p2x - p3x, 2) + pow(p2y - p3y, 2);
+  p1p3 = pow(p1x - p3x, 2) + pow(p1y - p3y, 2);
+  // → Apply the law of cosines: cos(angle) = (a² + b² - c²) / (2ab).
+  return 57.296 * acos((p1p2 + p2p3 - p1p3)/(2 * sqrt(p1p2) * sqrt(p2p3)));
+}
+
+// → Returns the 2D cross product of vectors (ax,ay) and (bx,by).
+// !! The cross product tells us the signed area of the parallelogram formed by the two vectors.
+// !! Used to check whether a ray intersects a line segment, and which side of a line a point falls on.
+function myCross(ax, ay, bx, by){
+  return ax*by - ay*bx;
+}
+
+// → Finds where a perpendicular ray from point (px,py) intersects the reference polyline.
+//
+// → Parameters:
+// → px, py:      The test line point we are measuring from.
+// → nx, ny:      The perpendicular direction (unit vector).
+// → refX, refY:  Arrays of X and Y coordinates defining the reference polyline.
+// → wantSign:    If non-zero, only accept intersections on a specific side of the reference line
+//                (1 = positive side, -1 = negative side, 0 = accept either side).
+//
+// → Returns an array: [foundFlag, intersectX, intersectY, distance, signedDistance]
+// → foundFlag = 1 if an intersection was found, 0 if not.
+function myPerpIntersectPolyline(px, py, nx, ny, refX, refY, wantSign){
+  bestFound = 0;
+  bestDist  = 1e99; // Start with a very large 'best distance' so any real distance beats it.
+  bestIx = 0; bestIy = 0; bestT = 0;
+
+  // → Loop over each segment of the reference polyline.
+  for(k = 0; k < refX.length - 1; k++){
+    ax = refX[k]; ay = refY[k];
+    bx = refX[k+1]; by = refY[k+1];
+    dx = bx - ax; dy = by - ay;
+
+    // → The cross product of the segment direction and ray direction tells us if they are parallel.
+    // !! If parallel, there is no intersection with this segment.
+    denom = myCross(dx, dy, nx, ny);
+    if(abs(denom) < 1e-9){
+      continue; // Ray and segment are parallel — skip.
+    }
+
+    // → Calculate 'u': how far along the segment the intersection occurs.
+    pax = px - ax; pay = py - ay;
+    u = myCross(pax, pay, nx, ny) / denom;
+
+    if(u < 0 || u > 1){
+      continue; // Intersection falls outside this segment — skip.
+    }
+
+    // → Calculate the actual intersection coordinates.
+    ix = ax + u*dx;
+    iy = ay + u*dy;
+
+    // → t is the signed distance from the test point to the intersection along the ray direction.
+    // !! Positive t means the intersection is on one side; negative means the other.
+    t = (ix - px)*nx + (iy - py)*ny;
+
+    // → If enforcing a side constraint, skip intersections on the wrong side.
+    if(wantSign != 0){
+      if(t == 0){ continue; }         // Intersection is exactly on the ray origin — skip.
+      if(t/wantSign < 0){ continue; } // Intersection is on the wrong side — skip.
+    }
+
+    // → Keep track of the closest valid intersection found so far.
+    dist = sqrt(pow(ix - px, 2) + pow(iy - py, 2));
+    if(dist < bestDist){
+      bestDist  = dist;
+      bestIx = ix; bestIy = iy; bestT = t;
+      bestFound = 1;
+    }
+  }
+
+  return newArray(bestFound, bestIx, bestIy, bestDist, bestT);
+}
+
+
+// ---------------------------------------------------------------
+// Image and overlay helpers.
+// ---------------------------------------------------------------
+
+// → Cleanly closes all images and exits the macro.
+// !! If withShiftKey = 0, quit unconditionally.
+// !! If withShiftKey = 1, only quit if the user is currently holding the Shift key.
+// !! The Shift key shortcut gives users a way to abort at any waitForUser prompt.
+function myQuit(withShiftKey) {
+  if(withShiftKey == 0){
+    close('*');
+    setKeyDown('none'); // Clear any held keys so they don't affect ImageJ after exit.
+    exit;
+  }else if(isKeyDown('Shift') == true){
+    close('*');
+    setKeyDown('none');
+    exit;
+  }
+}
+
+// → Saves a flattened (burned-in) copy of the current image with all measurement overlays visible.
+// !! Called when the user chooses to export annotated images.
+// !! If 'Show stats on image' was off, this function adds a stats overlay just for the export.
+// !! The saved file is a .tif named after the original image file.
+function mySaveAnnotatedImage(){
+  openedImages = getList('image.titles');
+  if(openedImages.length == 0){
+    waitForUser("No image!\n\nDon't close image while the macro is running.\n\nMeasurements were saved but\n\nimage annotated with measurements was not saved.");
+  }else{
+    if(settingShowStatsInImage == 0){
+      // → Stats were not shown during measurement, so add them now for the export.
+      nVals = shortestDistLengths.length;
+      if(nVals > 0){
+        sumV = 0; sumV2 = 0; minV = shortestDistLengths[0]; maxV = shortestDistLengths[0];
+        for(ii=0; ii<nVals; ii++){
+          v     = shortestDistLengths[ii];
+          sumV  = sumV  + v;
+          sumV2 = sumV2 + v*v;
+          if(v < minV) minV = v;
+          if(v > maxV) maxV = v;
+        }
+        meanV = sumV / nVals;
+        varV  = (sumV2 / nVals) - (meanV*meanV);
+        if(varV < 0) varV = 0;
+        sdV = sqrt(varV);
+
+        // → Set font so fontHeight is available for multi-line placement.
+        exportTextSize = floor(0.01 * sqrt(pow(refLineLastX - refLineFirstX, 2) + pow(refLineLastY - refLineFirstY, 2)) + 8);
+        setFont('Monospaced', exportTextSize, 'antialiased');
+        fontHeight = getValue('font.height');
+
+        // → Draw stats at top-left of image.
+        statsLine1 = 'n=' + d2s(nVals,0) + '  mean=' + d2s(meanV,3) + ' px';
+        statsLine2 = 'sd=' + d2s(sdV,3)  + ' px  min=' + d2s(minV,3) + '  max=' + d2s(maxV,3);
+        x0 = 5; y0 = 5;
+        makeText(statsLine1, x0, y0);
+        Overlay.addSelection('', 0, settingTextBgColor);
+        makeText(statsLine2, x0, y0 + fontHeight);
+        Overlay.addSelection('', 0, settingTextBgColor);
+      }
+    }
+
+    if(settingShowStatsInImage != 0 && measurementNum > 2){
+      Overlay.removeSelection(endOverlayCount - 1);
+      measurementStats = d2s(measurementNum - 1, 0) + ': ' + resultAvailable; // Finalized label: measurement number + stats summary.
+      makeText(String.trim(measurementStats), 0, (fontHeight * (measurementNum - 2)));
+      Overlay.addSelection('', 0, settingTextBgColor);
+      makeText(measurementNum - 1, refLineFirstX, refLineFirstY); // Draw the measurement number near the start of the reference line.
+      Overlay.addSelection('', 0, settingTextBgColor);
+    }
+    Overlay.flatten;
+    save(settingAnnotatedExportDir + File.separator + imgFileNoExtension + '_InterEdge-Representative.tif');
+    close();
+  }
+}
+
+} // END macro "FixedLineMucus"

@@ -1,0 +1,407 @@
+// =============================
+// WhitePixelCounter Macro For ImageJ/Fiji
+// By Megan Turluk, Mucin Glycobiology (Bergstrom) Lab
+// Version 1.0 — 07 March 2026
+// =====================================================
+
+// !! Threshold rule:
+//   → Pixel intensity < X → BLACK
+//   → Pixel intensity >= X → WHITE
+
+// !! The fixed threshold removes uncertainty from imageJ’s auto thresholds.
+// !! Optimal threshold values will vary between channels and depend on background signal + image pre-processing.
+// !! Before batch processing it is recommended to compare the 0/255 masks of a single image to split channel images in order to accurately threshold.
+
+//  -----------------------------------------------------
+// !! Customize the default channel toggles and thresholding values below.
+// !! If a channel is 0, no masks or white pixel count will be saved, and the thresholding settings will not appear in the UI.
+// -----------------------------------------------------
+
+PROCESS_RED   = 1;
+PROCESS_GREEN = 1;
+PROCESS_BLUE  = 0;
+
+THRESH_RED   = 40;  // red channel threshold:   < = black, >= = white
+THRESH_GREEN = 40;  // green channel threshold: < = black, >= = white
+THRESH_BLUE  = 40;  // blue channel threshold:  < = black, >= = white
+
+
+SAVE_MASK_255 = 1;  // set 0 to skip saving the 0/255 QC masks
+SAVE_MASK_01  = 1;  // set 0 to skip saving the 0/1 masks
+
+// =====================================================
+// FILENAMES AND CHANNEL WINDOW LOOKUP
+// =====================================================
+
+// → Strip extension from filename
+function baseNameFromFile(name) {
+    dot = lastIndexOf(name, ".");
+    if (dot != -1) return substring(name, 0, dot);
+    return name;
+}
+
+// → Look for split-channel window titles instead of title strings
+function findChannelTitle(originalName, colorSuffix) {
+    titles = getList("image.titles");
+
+    // → Look for titles titles that start with the original filename
+    for (k = 0; k < titles.length; k++) {
+        t = titles[k];
+        if (startsWith(t, originalName) && endsWith(t, " (" + colorSuffix + ")"))
+            return t;
+    }
+
+    // → OR any open window that ends with the channel suffix
+    for (k = 0; k < titles.length; k++) {
+        t = titles[k];
+        if (endsWith(t, " (" + colorSuffix + ")"))
+            return t;
+    }
+
+    return "";
+}
+
+
+// → Close specific window if it exists
+function closeIfOpen(title) {
+    if (title=="" ) return;
+    if (isOpen(title)) {
+        selectWindow(title);
+        close();
+    }
+}
+
+// =====================================================
+// PER CHANNEL MEASUREMENTS
+// =====================================================
+// processChannel():
+//   1) Duplicates the selected channel.
+//   2) Scales the user threshold from 8-bit to the image bit depth.
+//   3) Thresholds + converts to mask.
+//   4) Optionally saves 0/255 and 0/1 masks.
+//   5) Converts the mask to a column-wise white pixel count profile.
+//   6) Closes the window (even if ImageJ renames...)
+//
+// !! Temporary window title avoids Work & Work-1 collisions.
+// !! Close() avoids the "mask pops up at end" issue caused by ImageJ renaming windows to the saved filename.
+
+// ---------------------------------------------------------------
+// → Process the channel window
+function processChannel(winTitle, save255Path, save01Path, CHANNEL_THRESH) {
+
+    // → Select the channel image.
+    selectWindow(winTitle);
+
+    // → Duplicate.
+    run("Select All");
+
+    // → Generate a temp window title.
+    workTitle = "RG_Work_" + getTime();
+    run("Duplicate...", "title=" + workTitle);
+    selectWindow(workTitle);
+  
+    // → Bit depth aware thresholding.
+    // !! Pixels are classified as: intensity < thr → black (0); intensity ≥ thr → white (1).
+    bd = bitDepth();
+    if (bd < 1) {
+        exit("Unsupported bit depth: " + bd + "-bit: " + winTitle);
+    }
+
+    // → Report bit depth + scaled threshold. 
+    print("  [" + winTitle + "] bit depth: " + bd + "-bit");
+
+    // !! General bit-depth scaling formula.
+    // --------------------------------------------------
+    // → Thresholds in the UI are expressed in easy to gauge 8-bit units (0–255), but microscopy images vary in bit depth.
+    // → We convert the user's 8-bit threshold (T_old) into the native bit depth (bd):
+    // → T_new = round( T_old * ((2^bd - 1) / (2^8 - 1)) )
+    // !! Why?
+    // → Same UI numbers behave consistently across bit depths.
+    // → Makes the method transferable between different acquisition systems.
+    // !! If images have been rescaled/normalized upstream, you should re-validate.
+    // --------------------------------------------------
+    
+    // → In practice.
+    oldBits = 8; // thresholds are defined in 8-bit space
+    maxv = pow(2, bd) - 1;
+    thr  = round(CHANNEL_THRESH * (maxv / (pow(2, oldBits) - 1)));
+    print("  [" + winTitle + "] scaled threshold: " + thr + " (max=" + maxv + ")");
+    setThreshold(thr, maxv);
+
+    // → Convert to 0/255 mask and save it for QC.
+    setOption("BlackBackground", true);
+    run("Convert to Mask");
+
+    if (SAVE_MASK_255 && save255Path!="") {
+        print("  [" + winTitle + "] saving 0/255 mask: " + save255Path);
+        saveAs("Tiff", save255Path);
+    }
+
+    // → Convert to the 0/1 mask for measurements.
+    run("Divide...", "value=255");
+    if (SAVE_MASK_01 && save01Path!="") {
+        print("  [" + winTitle + "] saving 0/1 mask: " + save01Path);
+        saveAs("Tiff", save01Path);
+    }
+
+    // → Convert to column-wise white-pixel counts.
+    imgH = getHeight();
+    run("Multiply...", "value=" + imgH);
+    run("Select All");
+    prof = getProfile();
+
+    
+    // → Cleanup: close the current work window.
+    // !!Closing by title can fail, so we close the work window directly.
+    close();
+
+// → Re-focus the original channel window so nothing pops up at the end of the run.
+    if (isOpen(winTitle)) {
+        selectWindow(winTitle);
+    }
+    return prof;
+}
+
+// =====================================================
+// USER INTERFACE 
+// -----------------------------------------------------
+// Two-dialog approach:
+//   → Dialog 1 (Channels): avoids checkbox read-order quirks across Fiji builds.
+//   → Dialog 2 (Thresholds/Exports): shows only relevant threshold fields.
+//   Why?
+//   → Fewer read-order bugs across versions.
+
+// ---------------------------------------------------------------
+// Dialog 1 → Channel selection.
+// ---------------------------------------------------------------
+Dialog.create("White Pixel Counter — Channels");
+Dialog.addMessage("Select Channels to Process");
+Dialog.addCheckbox("RED", PROCESS_RED);
+Dialog.addCheckbox("GREEN", PROCESS_GREEN);
+Dialog.addCheckbox("BLUE", PROCESS_BLUE);
+Dialog.show();
+
+// → Read channel toggles.
+PROCESS_RED   = Dialog.getCheckbox();
+PROCESS_GREEN = Dialog.getCheckbox();
+PROCESS_BLUE  = Dialog.getCheckbox();
+
+// At least one channel must be selected...
+if (!PROCESS_RED && !PROCESS_GREEN && !PROCESS_BLUE)
+    exit("No channels selected. Select at least one channel to proceed.");
+
+// ---------------------------------------------------------------
+// Dialog 2 → Thresholds and masks.
+// ---------------------------------------------------------------
+Dialog.create("White Pixel Counter — Thresholds & Exports");
+Dialog.addMessage("Relative Intensity Thresholds (0 to 255)");
+
+    // → Only show threshold controls for channels that are checked.
+if (PROCESS_RED)   Dialog.addNumber("Red:", THRESH_RED);
+if (PROCESS_GREEN) Dialog.addNumber("Green:", THRESH_GREEN);
+if (PROCESS_BLUE)  Dialog.addNumber("Blue:", THRESH_BLUE);
+
+    // → Masks.
+Dialog.addMessage("-------------------------------------------------------------------------------");
+Dialog.addMessage("Export Masks");
+Dialog.addCheckbox("0/255 Binary", SAVE_MASK_255);
+Dialog.addCheckbox("0/1 Binary", SAVE_MASK_01);
+Dialog.show();
+
+   // Read thresholds in the SAME order they were added
+if (PROCESS_RED)   THRESH_RED   = Dialog.getNumber();
+if (PROCESS_GREEN) THRESH_GREEN = Dialog.getNumber();
+if (PROCESS_BLUE)  THRESH_BLUE  = Dialog.getNumber();
+
+SAVE_MASK_255 = Dialog.getCheckbox();
+SAVE_MASK_01  = Dialog.getCheckbox();
+
+
+// =====================================================
+
+print("");
+print("Settings:");
+print("  PROCESS_RED   = " + PROCESS_RED);
+print("  PROCESS_GREEN = " + PROCESS_GREEN);
+print("  PROCESS_BLUE  = " + PROCESS_BLUE);
+print("THRESH_RED = " + THRESH_RED + " (8-bit scale)");
+print("THRESH_GREEN = " + THRESH_GREEN + " (8-bit scale)");
+print("THRESH_BLUE = " + THRESH_BLUE + " (8-bit scale)");
+print("  Export 0/255 masks = " + SAVE_MASK_255);
+print("  Export 0/1 masks   = " + SAVE_MASK_01);
+print("");
+
+
+
+// =====================================================
+// BATCH (FOLDER → CSV + OPTIONAL MASKS)
+// =====================================================
+
+// → Select input folder.
+inputDir = getDirectory("Choose folder with images");
+if (inputDir=="") exit("No folder selected — stopping.");
+
+// → List files.
+fileList = getFileList(inputDir);
+if (fileList.length==0)
+    exit("That folder looks empty. Select the folder that directly contains the images.");
+
+// → Output CSV.
+csvFile = inputDir + "whitepixel_profile.csv";
+// → Log file (auto-saved at end)
+logFile = inputDir + "run_log.txt";
+
+
+// → Output folders.
+red255Dir    = inputDir + "Red_Binary_255/";
+red01Dir     = inputDir + "Red_Binary_01/";
+green255Dir  = inputDir + "Green_Binary_255/";
+green01Dir   = inputDir + "Green_Binary_01/";
+blue255Dir   = inputDir + "Blue_Binary_255/";
+blue01Dir    = inputDir + "Blue_Binary_01/";
+
+if (PROCESS_RED && SAVE_MASK_255)   File.makeDirectory(red255Dir);
+if (PROCESS_RED && SAVE_MASK_01)    File.makeDirectory(red01Dir);
+
+if (PROCESS_GREEN && SAVE_MASK_255) File.makeDirectory(green255Dir);
+if (PROCESS_GREEN && SAVE_MASK_01)  File.makeDirectory(green01Dir);
+
+if (PROCESS_BLUE && SAVE_MASK_255)  File.makeDirectory(blue255Dir);
+if (PROCESS_BLUE && SAVE_MASK_01)   File.makeDirectory(blue01Dir);
+
+// → Overwrite CSV.
+header = "Image,Column";
+if (PROCESS_RED)   header = header + ",Red_WhitePixelCount";
+if (PROCESS_GREEN) header = header + ",Green_WhitePixelCount";
+if (PROCESS_BLUE)  header = header + ",Blue_WhitePixelCount";
+header = header + "\r\n";
+File.saveString(header, csvFile);
+
+
+// → Batch mode for speed.
+setBatchMode(true);
+
+processed = 0;
+skipped = 0;
+
+// → Loop through files.
+for (i = 0; i < fileList.length; i++) {
+
+    name = fileList[i];
+    low  = toLowerCase(name);
+
+    if (!(endsWith(low, ".png") || endsWith(low, ".tif") || endsWith(low, ".tiff") ||
+          endsWith(low, ".jpg") || endsWith(low, ".jpeg"))) {
+        skipped++;
+        continue;
+    }
+
+    base = baseNameFromFile(name);
+    print("Processing: " + name);
+
+    // → Open image.
+    open(inputDir + name);
+    origTitle = getTitle();
+
+    // → Ensure RGB, then split channels.
+    run("RGB Color");
+    run("Split Channels");
+
+    
+    // → Find split-channel window titles by colour suffix.
+    // !! Avoids unprocessed channel windows popping up after batch runs.
+    redTitle   = findChannelTitle(name, "red");
+    greenTitle = findChannelTitle(name, "green");
+    blueTitle  = findChannelTitle(name, "blue");
+
+    if ((PROCESS_RED && redTitle=="") ||
+        (PROCESS_GREEN && greenTitle=="") ||
+        (PROCESS_BLUE && blueTitle=="")) {
+        // If required channel windows aren’t found, stop.
+        exit("Could not find required split-channel window(s) for: " + name);
+    }
+    // → Output for enabled exports.
+    red255Path   = "";
+    red01Path    = "";
+    green255Path = "";
+    green01Path  = "";
+    blue255Path  = "";
+    blue01Path   = "";
+
+    if (PROCESS_RED && SAVE_MASK_255)   red255Path   = red255Dir   + base + "_red_binary255.tif";
+    if (PROCESS_RED && SAVE_MASK_01)    red01Path    = red01Dir    + base + "_red_binary01.tif";
+
+    if (PROCESS_GREEN && SAVE_MASK_255) green255Path = green255Dir + base + "_green_binary255.tif";
+    if (PROCESS_GREEN && SAVE_MASK_01)  green01Path  = green01Dir  + base + "_green_binary01.tif";
+
+    if (PROCESS_BLUE && SAVE_MASK_255)  blue255Path  = blue255Dir  + base + "_blue_binary255.tif";
+    if (PROCESS_BLUE && SAVE_MASK_01)   blue01Path   = blue01Dir   + base + "_blue_binary01.tif";
+
+    // → Process channels toggled on.
+    haveAny = false;
+    n = 0;
+
+    if (PROCESS_RED) {
+        redProf = processChannel(redTitle, red255Path, red01Path, THRESH_RED);
+        n = redProf.length;
+        haveAny = true;
+    }
+
+    if (PROCESS_GREEN) {
+        greenProf = processChannel(greenTitle, green255Path, green01Path, THRESH_GREEN);
+        if (!haveAny) n = greenProf.length;
+        if (greenProf.length < n) n = greenProf.length;
+        haveAny = true;
+    }
+
+    if (PROCESS_BLUE) {
+        blueProf = processChannel(blueTitle, blue255Path, blue01Path, THRESH_BLUE);
+        if (!haveAny) n = blueProf.length;
+        if (blueProf.length < n) n = blueProf.length;
+        haveAny = true;
+    }
+
+    if (!haveAny) exit("No channels selected in the UI — nothing to do.");
+
+    // → Export CSV rows with columns aligned by index.
+    for (c = 0; c < n; c++) {
+        line = name + "," + (c+1);
+        if (PROCESS_RED)   line = line + "," + redProf[c];
+        if (PROCESS_GREEN) line = line + "," + greenProf[c];
+        if (PROCESS_BLUE)  line = line + "," + blueProf[c];
+        line = line + "\r";
+        File.append(line, csvFile);
+    }
+
+    // → Close windows.
+    closeIfOpen(redTitle);
+    closeIfOpen(greenTitle);
+    closeIfOpen(blueTitle);
+    closeIfOpen(origTitle);
+    processed++;
+}
+
+setBatchMode(false);
+
+// → Completion message.
+print("");
+print("All done!");
+print("Processed images: " + processed + " (skipped " + skipped + " non-image files)");
+print("");
+print("Outputs saved inside:");
+print("CSV: " + csvFile);
+
+// → Save Log automatically.
+if (isOpen("Log")) {
+    selectWindow("Log");
+    saveAs("Text", logFile);
+}
+
+if (PROCESS_RED && SAVE_MASK_255) print("Red masks (0/255):   " + red255Dir);
+if (PROCESS_RED && SAVE_MASK_01)  print("Red masks (0/1):     " + red01Dir);
+
+if (PROCESS_GREEN && SAVE_MASK_255) print("Green masks (0/255): " + green255Dir);
+if (PROCESS_GREEN && SAVE_MASK_01)  print("Green masks (0/1):   " + green01Dir);
+
+if (PROCESS_BLUE && SAVE_MASK_255) print("Blue masks (0/255):  " + blue255Dir);
+if (PROCESS_BLUE && SAVE_MASK_01)  print("Blue masks (0/1):    " + blue01Dir);
