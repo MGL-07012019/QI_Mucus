@@ -2,6 +2,8 @@
 // FixedLineMucus Macro For ImageJ/Fiji
 // By Megan Turluk, Mucin Glycobiology (Bergstrom) Lab
 // Version 1.0 — 06 March 2026
+// Adapted from InterEdgeDistanceMacro by Santosh Patnaik, MD, PhD 
+// → https://sourceforge.net/projects/InteredgeDistance/
 // =====================================================
 
 // !! This macro measures the perpendicular distances between two user-drawn lines at evenly spaced points along the test line.
