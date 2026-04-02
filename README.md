@@ -84,3 +84,7 @@ We are interested in collaborations involving:
 🧠 Philosophy
 “To understand mucus is to understand the interface between host and environment.”
 
+[WHITE PIXEL COUNTER README 1.docx](https://github.com/user-attachments/files/26426790/WHITE.PIXEL.COUNTER.README.1.docx)
+
+
+
