@@ -1,4 +1,4 @@
-Detailed information on how to use the FixedLineMucus and WhitePixelCounter macros can be sound in the files below.
+Detailed information on how to use the FixedLineMucus and WhitePixelCounter macros can be found in the files below.
 [FixedLineMucus_README.docx](https://github.com/user-attachments/files/26427077/FixedLineMucus_README.docx)
 [WhitePixelCounter.README.docx](https://github.com/user-attachments/files/26427078/WhitePixelCounter.README.docx)
 
