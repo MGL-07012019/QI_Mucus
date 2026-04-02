@@ -1,3 +1,8 @@
+Detailed information on how to use the FixedLineMucus and WhitePixelCounter macros can be sound in the files below.
+[FixedLineMucus_README.docx](https://github.com/user-attachments/files/26427077/FixedLineMucus_README.docx)
+[WhitePixelCounter.README.docx](https://github.com/user-attachments/files/26427078/WhitePixelCounter.README.docx)
+
+
 🧬 Mucin Glycobiology & Quantitative Imaging Lab
 
 👋 About Us
@@ -83,8 +88,3 @@ We are interested in collaborations involving:
  
 🧠 Philosophy
 “To understand mucus is to understand the interface between host and environment.”
-
-[WHITE PIXEL COUNTER README 1.docx](https://github.com/user-attachments/files/26426790/WHITE.PIXEL.COUNTER.README.1.docx)
-
-
-
